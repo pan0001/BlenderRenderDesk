@@ -1,14 +1,7 @@
 __pycache__/
-*.py[cod]
+*.pyc
 .venv/
-venv/
 build/
 dist/
 *.spec
-*.zip
-*.blend
-*.blend1
-*.log
-manager.lock
-jobs/
-.env
+*.sqlite3*

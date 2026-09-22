@@ -5,3 +5,9 @@ build/
 dist/
 *.spec
 *.sqlite3*
+bark.json
+access-token.json
+server-status.json
+server.json
+manager.lock
+jobs/

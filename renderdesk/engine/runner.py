@@ -50,7 +50,8 @@ class RenderSession:
             raise ValueError(f'发现未确认的输出，已停止以免覆盖：{target}')
         if scene.render.use_multiview:
             raise ValueError('当前帧事务不支持多视图输出')
-        scratch = target.with_name('.renderdesk-' + target.name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        scratch = target.with_name('.renderdesk-' + self.job['id'] + '-' + target.name)
         original_path = scene.render.filepath
         started = time.monotonic()
         self.status('rendering', frame=frame, engine=scene.render.engine)
@@ -84,12 +85,13 @@ class RenderSession:
         scene = bpy.data.scenes[self.job['scene']] if self.job.get('scene') else bpy.context.scene
         if self.job.get('camera'):
             scene.camera = scene.objects[self.job['camera']]
-        scene.render.image_settings.file_format = self.job['format']
-        if self.job['format'] == 'PNG' and scene.render.image_settings.color_depth == '32':
-            scene.render.image_settings.color_depth = '16'
-        scene.render.use_file_extension = True
-        scene.render.use_placeholder = False
-        scene.render.use_overwrite = True
+        if not self.job.get('preserve_project'):
+            scene.render.image_settings.file_format = self.job['format']
+            if self.job['format'] == 'PNG' and scene.render.image_settings.color_depth == '32':
+                scene.render.image_settings.color_depth = '16'
+            scene.render.use_file_extension = True
+            scene.render.use_placeholder = False
+            scene.render.use_overwrite = True
         for frame in frames(self.job):
             if str(frame) in self.done:
                 continue

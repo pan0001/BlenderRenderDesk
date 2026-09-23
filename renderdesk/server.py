@@ -7,7 +7,7 @@ import secrets
 import threading
 import time
 from urllib.parse import urlsplit
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
 from .engine.protocol import read, write
 
@@ -17,6 +17,7 @@ def create_app(runtime, token, remote=False):
     app.config['MAX_CONTENT_LENGTH'] = 65536
     web = Path(__file__).parent / 'web'
     operations, operation_lock = {}, threading.Lock()
+    access_key = {'token': token}
 
     @app.before_request
     def authorize():
@@ -27,7 +28,7 @@ def create_app(runtime, token, remote=False):
         if origin and origin != request.host_url.rstrip('/'):
             return jsonify(error='不允许跨站请求'), 403
         auth = request.headers.get('Authorization', '')
-        if not hmac.compare_digest(auth, 'Bearer ' + token):
+        if not hmac.compare_digest(auth.encode('utf8'), ('Bearer ' + access_key['token']).encode('utf8')):
             return jsonify(error='请填写访问密钥'), 401
 
     @app.after_request
@@ -35,7 +36,7 @@ def create_app(runtime, token, remote=False):
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         return response
 
     @app.errorhandler(Exception)
@@ -78,12 +79,27 @@ def create_app(runtime, token, remote=False):
 
     @app.get('/api/access')
     def access():
-        return jsonify(token=token)
+        return jsonify(token=access_key['token'])
+
+    @app.post('/api/access')
+    def change_access():
+        new_key = str(request.get_json().get('token', ''))
+        if not 16 <= len(new_key) <= 128 or any(ord(c) < 33 or ord(c) > 126 for c in new_key):
+            raise ValueError('访问密钥需为 16–128 位英文字母、数字或符号，不能含空格')
+        write(runtime.root / 'access-token.json', {'token': new_key})
+        access_key['token'] = new_key
+        return jsonify(token=new_key)
+
+    @app.get('/api/jobs/<jid>/preview')
+    def preview(jid):
+        if jid not in {t['job']['id'] for t in runtime.snapshot()['tasks']}:
+            raise ValueError('找不到任务')
+        return send_file(runtime.previews.get(jid), mimetype='image/jpeg')
 
     @app.post('/api/commands')
     def command():
         body = request.get_json()
-        if not isinstance(body, dict) or body.get('action') not in ('add', 'attach', 'start', 'pause', 'schedule', 'bark.save', 'bark.test', 'refresh'):
+        if not isinstance(body, dict) or body.get('action') not in ('add', 'attach', 'start', 'pause', 'schedule', 'bark.save', 'bark.test', 'refresh', 'project.scan', 'project.import', 'project.rescan', 'blender.save', 'watchdog.save', 'frpc.save', 'frpc.start', 'frpc.stop'):
             raise ValueError('无效操作')
         values = body.get('values', {})
         if not isinstance(values, dict):

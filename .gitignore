@@ -11,3 +11,11 @@ server-status.json
 server.json
 manager.lock
 jobs/
+
+blenders.json
+watchdog.json
+recovery.json
+frpc-settings.json
+frpc-managed.json
+frpc.log
+previews/

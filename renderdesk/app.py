@@ -46,8 +46,8 @@ class DesktopBridge:
             result = self._window.create_file_dialog(webview.FileDialog.FOLDER)
         else:
             filters = ('Blender project (*.blend)',) if kind == 'blend' else ('Programs (*.exe)', 'All files (*.*)')
-            result = self._window.create_file_dialog(webview.FileDialog.OPEN, allow_multiple=False, file_types=filters)
-        return result[0] if result else None
+            result = self._window.create_file_dialog(webview.FileDialog.OPEN, allow_multiple=kind == 'blend', file_types=filters)
+        return (list(result) if kind == 'blend' else result[0]) if result else None
 
 
 def main():
@@ -79,6 +79,8 @@ def main():
         url = f'http://127.0.0.1:{actual_port}/'
         write(args.data_dir / 'server-status.json', {'url': url, 'remote': remote, 'pid': os.getpid()})
         threading.Thread(target=server.run, daemon=True, name='HTTP server').start()
+        if runtime.tunnel.config.get('autostart'):
+            runtime.submit('frpc.start', {})
         if args.server:
             print(f'Render Desk: {url} | access key: {token_path}', flush=True)
             if args.smoke_test:
@@ -93,6 +95,16 @@ def main():
         window = webview.create_window('Blender Render Desk 3', url + '#token=' + token,
                                        js_api=bridge, width=1380, height=900, min_size=(780, 580), background_color='#10151c')
         bridge._window = window
+        def bind_drop():
+            from webview.dom import DOMEventHandler
+            def drop(event):
+                paths = [f.get('pywebviewFullPath') for f in event.get('dataTransfer', {}).get('files', [])]
+                paths = [p for p in paths if p and p.lower().endswith('.blend')]
+                if paths:
+                    window.evaluate_js('window.receiveDroppedProjects(' + json.dumps(paths) + ')')
+            window.dom.document.events.dragover += DOMEventHandler(lambda e: None, True, False, debounce=500)
+            window.dom.document.events.drop += DOMEventHandler(drop, True, False)
+        window.events.loaded += bind_drop
         if args.smoke_test:
             def smoke():
                 for _ in range(80):

@@ -53,6 +53,8 @@ def frames(job):
 
 
 def frame_file(job, frame):
+    if job.get('project_paths') and not job.get('external'):
+        return Path(job['project_paths'][str(frame)])
     pattern = job.get('external', {}).get('pattern')
     if pattern:
         match = re.search(r'#+', pattern)

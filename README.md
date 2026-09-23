@@ -1,4 +1,6 @@
-# Blender Render Desk 3
+# Blender Render Desk 3.1.0
+
+[本版更新总结与升级说明](docs/releases/v3.1.0.md) · [版本号](VERSION)
 
 **GPT 帮你开始渲染，Render Desk 帮你看清进度；想上号时暂停一下，渲染完成让 Bark 告诉你。**
 
@@ -10,34 +12,40 @@
 
 ![桌面网页共用界面（测试任务）](assets/preview.png)
 
-## 3.0 更新
+## 3.1 更新
 
-- **一套网页 UI**：pywebview 桌面窗口与浏览器使用同一份 HTML / CSS / JS、同一个 HTTP API，不维护两套界面。
-- **远程管理**：可同时用手机、另一台电脑查看进度、资源、日志，创建任务、按帧暂停、继续和定时。远程默认关闭，接口需要访问密钥。
-- **Bark 完成通知**：设置推送地址，渲染结束自动提醒；后台发送，持久队列，最多尝试三次，完成事件去重。
-- **分层目录**：界面、服务、渲染执行器、测试、构建和文档各有目录。
-- 保留 SQLite 任务目录、PNG / OpenEXR、帧 SHA256 校验、缺失帧补渲染、旧任务导入与进程接入。
+- **全局 Blender 版本库**：支持多个版本与默认版本，导入工程时无需反复指定可执行文件。
+- **先读取工程，再创建任务**：使用 Blender 后台读取场景、相机、帧范围、步长、引擎、分辨率、图像格式、位深与输出路径。默认沿用工程配置，不改写 `.blend`。
+- **批量导入与拖拽**：桌面窗口支持多选和拖入多个 `.blend`。网页端可每行输入一个渲染电脑上的路径。
+- **真实帧数**：接入进程先扫描工程；分别显示工程总范围与本次任务范围。1200 帧工程不再套用 60 帧默认值；旧任务可“重新扫描工程”。
+- **两种 Watchdog**：监测文件变化更新进度；可选意外退出后的限次自动恢复。正常暂停不会触发重启，也不以渲染耗时判断卡死。
+- **最新完整帧预览**：按完成记录显示最新图像；普通图片生成缩略图，EXR / HDR 使用后台 Blender 转换。不会预览正在写入的半帧。
+- **手动访问密钥**：可在设置中修改，立即生效，其他设备需重新连接。
+- **内置 frpc 0.71.0**：配置自己的 frps 地址、端口和 Token，启动 / 停止穿透并查看日志；可随管理器启动。
+- 延续 3.0 的 pywebview / 浏览器统一 UI、Bark 通知、实时日志、CPU / 内存 / GPU 监测、定时和帧级暂停。
 
 ## Windows 使用
 
 完整解压 Windows 压缩包，运行 `BlenderRenderDesk.exe`。保留 `_internal` 目录。桌面端需要 Microsoft Edge WebView2 Runtime（现代 Windows 通常已有）；源码服务器模式不需要 WebView2。
 
-1. 点击“新建任务”，选择 Blender 程序、保存好的 `.blend` 和输出目录，填写帧范围。
-2. 创建后点击“开始 / 继续”。每项任务使用独立输出子目录。
+1. 在“软件设置 → Blender 版本”添加程序并设置默认版本（首次启动会检测常见安装位置）。
+2. 点击“新建任务”，多选或拖入 `.blend`，读取工程配置后加入队列。默认保留工程输出路径；可勾选手动覆盖范围或输出目录，再点击“开始 / 继续”。
 3. 按帧暂停等待当前帧保存后退出 Blender，恢复会重新加载工程并跳过完成帧。
-4. “连接与通知”中配置 Bark，或启用局域网访问（重启后生效）。
+4. “软件设置”中配置 Bark，或启用局域网访问（重启后生效）。
 
 桌面端可浏览本机文件；远程端填写的是**渲染电脑上的路径**，不是手机或访问者电脑上的路径，不会上传工程。多台设备看到同一份任务目录，调度只运行一次。进度按完整帧计算，不是单帧内部采样百分比。未接入的进程没有可靠帧信息时不伪造进度。
 
 ## Bark
 
-在“连接与通知”填写 `https://api.day.app/你的Key`，勾选启用并保存，再点“发送测试通知”。可填写自建 Bark 服务的设备推送地址。留空保存会保留原地址。
+在“软件设置”填写 `https://api.day.app/你的Key`，勾选启用并保存，再点“发送测试通知”。可填写自建 Bark 服务的设备推送地址。留空保存会保留原地址。
 
 ![通知和远程设置](assets/settings.png)
 
 通知包含任务名称、完成帧数和累计用时，不发送本机路径。首次导入不推送已完成的历史任务；此后观察到任务完成才入队。首次失败约 15 秒后重试，再失败约 30 秒后重试，最多三次。设置页显示最近发送状态。Bark 的成功响应只表示服务接收，不能保证手机当时在线或系统一定展示通知。网络响应丢失或发送后意外崩溃时，重试可能产生重复推送。
 
 **通知需要管理服务保持运行。** 关闭桌面管理器会停止它的 HTTP 服务、通知和定时启动，但不会结束 Blender。若希望关闭窗口后继续管理，请使用下面的独立服务器模式。若管理器停机期间任务完成，重新开启后可检测已跟踪任务的完成并补发通知。
+
+新工程默认沿用原路径，遇到未经本任务确认的同名图片会停止，避免覆盖。暂停保留的是完成帧与任务状态；不会修改源工程。视频和多视图输出暂不支持按帧事务，扫描导入时会给出提示，不会自动转换格式。
 
 地址保存在数据目录 `bark.json`，包含设备密钥；访问密钥在 `access-token.json`。两者均为本机明文配置，不会随源码或便携包分发，API 不返回 Bark 地址。不要公开或分享这些文件。
 
@@ -55,15 +63,23 @@ python app.py --server --remote --port 8765
 
 密钥持有者可运行渲染电脑上的工程与受支持脚本，应仅给可信人员。局域网 HTTP 不加密流量；公网请通过 VPN 或配置正确的 HTTPS 反向代理访问，不要直接公开端口。程序不提供云中继、用户角色或多人权限管理。
 
+## Watchdog 与 frpc
+
+文件监测默认开启，结合约 1.5 秒的状态轮询；关闭文件监测仍可通过轮询更新。意外退出自动恢复默认关闭，开启后等待 5–3600 秒，最多恢复 1–5 次。只恢复正在运行且意外中断的任务；正常完成、暂停、明确的渲染错误、工程或已完成帧校验失败不会无限重试。恢复次数持久保存，手动开始会重置。管理器关闭时不提供文件监测或意外退出恢复，重新打开会识别仍在运行的 Blender。
+
+设置页提供官方 Windows x64 `frpc`。填写自己的 frps 地址、服务端口、Token 和一个空闲的远端映射端口，保存后启动。它只转发本程序的网页端口，始终保留工作台访问密钥校验；不会转发桌面或其他本地服务。frpc 与 frps 之间启用 TLS，但用户浏览器到 frps 的 HTTP 仍需你配置 HTTPS 入口。程序关闭时会停止它启动的 frpc，Blender 渲染不受影响。
+
+远程凭据在本机 `frpc-settings.json` / `frpc-managed.json`；勿分享。此版本附带官方 frpc 二进制及许可证，不附带公共 frps 或免费中继账户。[frp 官方配置文档](https://gofrp.org/en/docs/features/common/configure/)。
+
 ## 已有 Blender 进程
 
-支持接入单个 `--python` 脚本同步调用 `bpy.ops.render.render(write_still=True)`、逐帧输出单视图 PNG 的后台任务。确认真实输出目录、帧范围与文件名模板，例如 `####.png`。原脚本必须可重跑，不能在初始化时清空已有输出。
+支持接入单个 `--python` 脚本同步调用 `bpy.ops.render.render(write_still=True)`、逐帧输出单视图 PNG 的后台任务。先扫描磁盘上的工程以确定帧范围，再确认真实输出目录与文件名模板，例如 `####.png`。脚本若在内存中改变范围或输出，需要明确填写覆盖设置；软件无法读取另一个 Blender 进程的任意 Python 内存。旧任务可点击“重新扫描工程”修正总数；正在由本程序渲染的任务需先按帧暂停再应用扫描结果。原脚本必须可重跑，不能在初始化时清空已有输出。
 
 首次暂停检测下一张 PNG 完整保存后结束原进程，可能丢弃随后开始的一帧计算；之后续渲染使用协作执行器，跳过完成帧并在帧边界退出。原进程的历史 stdout 无法补接；继续后保存完整输出。编辑窗口、直接 `-a` 动画命令、视频输出和其他不支持的进程仅可监测。
 
 ## 数据与升级
 
-默认 `%LOCALAPPDATA%/BlenderRenderDesk`。3.0 沿用 2.0 的 `renderdesk-v2.sqlite3` 与 `jobs/`，新增通知队列和连接设置，不移动工程或图片。升级先关闭旧管理器，再打开新版。若旧版用了 `--data-dir`，新版必须指定同一路径，例如：
+默认 `%LOCALAPPDATA%/BlenderRenderDesk`。3.1 沿用 2.0 的 `renderdesk-v2.sqlite3` 与 `jobs/`，新增通知队列和连接设置，不移动工程或图片。升级先关闭旧管理器，再打开新版。若旧版用了 `--data-dir`，新版必须指定同一路径，例如：
 
 ```powershell
 BlenderRenderDesk.exe --data-dir "D:/MyRenderTasks"
@@ -86,6 +102,10 @@ renderdesk/
   server.py            HTTP API、鉴权与静态资源
   runtime.py           单一任务控制线程与快照
   notifications.py     Bark 推送与持久通知队列
+  projects.py          全局版本库、后台工程扫描
+  watch.py             文件监测与限次恢复
+  previews.py          已完成帧缩略图缓存
+  tunnel.py            frpc 配置与进程管理
   service.py           调度、暂停、续渲染和接入
   storage.py           SQLite 任务目录
   processes.py         进程与资源采样
@@ -93,6 +113,7 @@ renderdesk/
   web/                 唯一一套 HTML / CSS / JS 界面
 tests/                 后端、HTTP、浏览器与真实 Blender 测试
 scripts/               Windows 构建脚本
+vendor/frpc/           官方客户端二进制、来源与许可证
 assets/                图标与界面截图
 docs/                  来源、依赖与验证说明
 licenses/              第三方许可文本与元数据
@@ -104,8 +125,9 @@ Python 3.10+；本次验证 Windows / Python 3.13 / Blender 5.1.2。
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 .\.venv\Scripts\python app.py
-.\.venv\Scripts\python -m unittest tests.test_engine tests.test_web -v
+.\.venv\Scripts\python -m unittest tests.test_engine tests.test_web tests.test_features -v
 .\.venv\Scripts\python -m tests.test_blender_integration
+.\.venv\Scripts\python -m tests.test_project_integration
 # 可选网页测试，使用已安装的 Edge：
 .\.venv\Scripts\python -m pip install playwright
 .\.venv\Scripts\python -m tests.test_browser

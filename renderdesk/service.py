@@ -90,8 +90,8 @@ class Controller:
                 raise ValueError(f'文件不存在：{values[key]}')
         if Path(values['blend']).suffix.lower() != '.blend':
             raise ValueError('请选择 .blend 工程')
-        if values.get('format', 'PNG') not in ('PNG', 'OPEN_EXR'):
-            raise ValueError('支持 PNG 和 OpenEXR 图像序列')
+        if values.get('format', 'PNG') not in ('PNG', 'OPEN_EXR', 'OPEN_EXR_MULTILAYER', 'JPEG', 'TIFF', 'BMP', 'TARGA', 'TARGA_RAW', 'IRIS', 'JPEG2000', 'HDR', 'WEBP'):
+            raise ValueError('该输出格式暂不支持按帧保存')
         values.setdefault('format', 'PNG')
         values.setdefault('autoexec', False)
         return values
@@ -107,6 +107,42 @@ class Controller:
         self.save(job)
         write(self.directory(jid) / 'job.json', job)
         self.event(jid, '任务已创建；图像将保存到独立任务目录。')
+        return jid
+
+    def add_project(self, values):
+        job = self.validate(values)
+        if signature(job['blend']) != values['source']:
+            raise ValueError('扫描后工程发生变化，请重新扫描')
+        jid = uuid.uuid4().hex[:12]
+        job.update(id=jid, name=Path(job['blend']).stem, created_at=time.time(),
+                   start_at=None, pause_at=None, elapsed_base=0)
+        self.save(job)
+        write(self.directory(jid) / 'job.json', job)
+        self.event(jid, '已从工程读取渲染配置，保留原输出路径和图像格式；已有未确认文件不会被覆盖。')
+        return jid
+
+    def rescan(self, jid, values):
+        job = self.jobs[jid]
+        attached = job.get('external', {}).get('phase') == 'attached'
+        if self.live(jid) and not attached:
+            raise ValueError('请先按帧暂停任务，再应用新的工程范围')
+        if values['source'] != job['source']:
+            raise ValueError('工程内容已修改，请新建任务，避免混用之前的完成帧')
+        updated = dict(job)
+        updated.update(project=values['project'], start=values['start'], end=values['end'],
+                       step=values['step'], range_source='project')
+        if job.get('preserve_project') and not job.get('external'):
+            updated['project_paths'] = values['project_paths']
+        records = read(self.directory(jid) / 'progress.json', {'done': {}})['done']
+        for frame, record in records.items():
+            if int(frame) not in frames(updated) or Path(record['path']).resolve() != frame_file(updated, int(frame)).resolve():
+                raise ValueError('工程范围或路径与已完成帧不匹配，请新建任务')
+        self.save(updated)
+        write(self.directory(jid) / 'job.json', updated)
+        state = read(self.directory(jid) / 'status.json', {})
+        if state.get('state') == 'complete' and len(records) < len(frames(updated)):
+            write(self.directory(jid) / 'status.json', {**state, 'state': 'interrupted'})
+        self.event(jid, f"已重新读取工程范围：{updated['start']}–{updated['end']}，共 {len(frames(updated))} 帧")
         return jid
 
     def status(self, jid, row=None):
@@ -132,7 +168,14 @@ class Controller:
         total = len(frames(self.jobs[jid]))
         return {**state, **(row or {}), 'state': label, 'running': live, 'pid': launch.get('pid') if live else None,
                 'done': len(progress), 'total': total, 'elapsed': elapsed,
+                'latest': self.latest(jid, progress),
                 'eta': (sum(seconds) / len(seconds) * (total - len(progress))) if seconds and live else None}
+
+    def latest(self, jid, records):
+        if not records:
+            return None
+        f, r = max(records.items(), key=lambda pair: pair[1].get('mtime_ns', 0))
+        return {'frame': int(f), 'version': str(r.get('mtime_ns', 0)) + '-' + str(r.get('size', 0))}
 
     def start(self, jid):
         job, directory = self.jobs[jid], self.directory(jid)
@@ -140,6 +183,9 @@ class Controller:
             raise ValueError('任务已经在运行')
         if signature(job['blend']) != job['source']:
             raise ValueError('工程已修改，请新建任务，避免混用不同版本的帧')
+        for other in self.jobs.values():
+            if other['id'] != jid and self.live(other['id']) and Path(other['output']).resolve() == Path(job['output']).resolve():
+                raise ValueError('该输出目录已有运行中的任务，请等待或更换输出目录')
         ext = job.get('external')
         if ext and signature(ext['script']) != ext['script_source']:
             raise ValueError('原渲染脚本已修改，不能安全续渲染')
@@ -233,6 +279,7 @@ class Controller:
         blend = str((Path(cwd) / blend).resolve())
         job = self.validate({**values, 'blend': blend, 'blender': item.exe(), 'format': 'PNG'})
         job.pop('process', None)
+        job.pop('project_paths', None)
         pattern = values['pattern']
         if not re.fullmatch(r'[^/\\#{}]*#{1,10}[^/\\#{}]*\.png', pattern, re.I):
             raise ValueError('文件名模板应类似 ####.png 或 frame_######.png')
@@ -341,9 +388,9 @@ class Controller:
             try:
                 identity = read(self.directory(jid) / 'launch.json', {})
                 metrics = indexed.get((identity.get('pid'), identity.get('created')))
-                tasks.append({'job': dict(job), 'status': self.status(jid, metrics)})
+                tasks.append({'job': {k: v for k, v in job.items() if k != 'project_paths'}, 'status': self.status(jid, metrics)})
             except Exception as error:
-                tasks.append({'job': dict(job), 'status': {'state': 'error', 'message': str(error), 'done': 0, 'total': len(frames(job)), 'elapsed': 0}})
+                tasks.append({'job': {k: v for k, v in job.items() if k != 'project_paths'}, 'status': {'state': 'error', 'message': str(error), 'done': 0, 'total': len(frames(job)), 'elapsed': 0}})
         return {'tasks': tasks, 'processes': processes, 'system': system, 'notices': self.notices[-5:]}
 
     def close(self):

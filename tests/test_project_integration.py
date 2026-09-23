@@ -60,12 +60,22 @@ bpy.ops.wm.save_as_mainfile(filepath=sys.argv[-1])
         preview=runtime.previews.get(small);assert preview.exists()
         assert digest(blend)==before
         print('PASS real crash recovery: new PID, 2/2 task and 1200 project total; PNG16 RGBA 48x32, exact original filename; preview and unchanged .blend',flush=True)
-        # Reopen the same data directory and validate persisted tasks/receipts.
+        # Reset a completed real render, preserve its images in the archive and render again.
+        reset=runtime.submit('queue.reset',{'id':small,'mode':'rerender'}).result(10)
+        assert reset['archived']==2
+        fresh=wait(small,lambda s:s['state']=='ready' and s['done']==0)
+        assert len(list((root/'原始输出/.renderdesk-history').rglob('shot_*')))==2
+        runtime.submit('start',{'id':small}).result(10)
+        wait(small,lambda s:s['state']=='complete' and not s['running'])
+        assert digest(blend)==before
+        print('PASS real completed reset: archived 2 originals, progress 0, rendered 2 frames again',flush=True)
+        # Reopen: clear completed queue entries, preserving waiting tasks and files.
         runtime.close();runtime=Runtime(root/'data')
-        assert len(runtime.snapshot()['tasks'])==2
-        assert next(t for t in runtime.snapshot()['tasks'] if t['job']['id']==small)['status']['done']==2
+        assert [t['job']['id'] for t in runtime.snapshot()['tasks']]==[jid]
+        assert (root/'原始输出/shot_0002').exists()
+        assert (root/'data/jobs'/small/'render.log').exists()
         (root/'result.json').write_text(json.dumps({'ok':True,'blend':str(blend),'data':str(root/'data'),'preview':str(preview)},ensure_ascii=False),encoding='utf8')
-        print('PASS upgrade/reopen retains tasks and complete frames. Workspace:',root,flush=True)
+        print('PASS reopen removes completed queue entry and preserves waiting task, images and logs. Workspace:',root,flush=True)
     finally:
         for child in list(runtime.controller.children.values()):
             if child.poll() is None:child.terminate();child.wait(15)

@@ -13,6 +13,7 @@ import psutil
 from .processes import Sampler, process
 from .engine.protocol import frame_file, frames, png_complete, read, receipt, signature, verify, write
 from .storage import Catalogue
+from .queueing import QueueActions
 
 LABELS = {'ready': '等待开始', 'starting': '启动中', 'loading': '载入工程', 'rendering': '正在渲染',
           'pausing': '保存当前帧后退出', 'watching': '等待新帧保存后停止', 'paused': '已暂停 · 资源已释放',
@@ -45,7 +46,7 @@ class LogReader:
         return reset, self.decoder.decode(block)
 
 
-class Controller:
+class Controller(QueueActions):
     def __init__(self, root=None):
         self.root = Path(root or default_root()).resolve()
         self.catalogue = Catalogue(self.root)
@@ -122,6 +123,8 @@ class Controller:
         return jid
 
     def rescan(self, jid, values):
+        if self.pending(jid):
+            raise ValueError('请等待队列操作完成后再扫描')
         job = self.jobs[jid]
         attached = job.get('external', {}).get('phase') == 'attached'
         if self.live(jid) and not attached:
@@ -169,6 +172,7 @@ class Controller:
         return {**state, **(row or {}), 'state': label, 'running': live, 'pid': launch.get('pid') if live else None,
                 'done': len(progress), 'total': total, 'elapsed': elapsed,
                 'latest': self.latest(jid, progress),
+                'pending': {k: v for k, v in self.pending(jid).items() if k in ('action', 'mode', 'error')},
                 'eta': (sum(seconds) / len(seconds) * (total - len(progress))) if seconds and live else None}
 
     def latest(self, jid, records):
@@ -179,6 +183,8 @@ class Controller:
 
     def start(self, jid):
         job, directory = self.jobs[jid], self.directory(jid)
+        if self.pending(jid):
+            raise ValueError('任务还有待完成的队列操作')
         if self.live(jid):
             raise ValueError('任务已经在运行')
         if signature(job['blend']) != job['source']:
@@ -249,6 +255,8 @@ class Controller:
         self.event(jid, '请求暂停；等待当前帧保存并退出 Blender。')
 
     def schedule(self, jid, start_at=None, pause_at=None):
+        if self.pending(jid):
+            raise ValueError('请等待队列操作完成后再安排计划')
         now = time.time()
         if any(value is not None and value <= now for value in (start_at, pause_at)):
             raise ValueError('计划时间必须在未来')
@@ -356,6 +364,7 @@ class Controller:
             self.save(job)
 
     def tick(self, now=None):
+        self.process_changes()
         now = time.time() if now is None else now
         for jid, job in list(self.jobs.items()):
             try:
@@ -384,7 +393,8 @@ class Controller:
         processes, system = self.sampler.scan()
         indexed = {(r['pid'], r['created']): r for r in processes}
         tasks = []
-        for jid, job in self.jobs.items():
+        for jid in self.ordered_ids():
+            job = self.jobs[jid]
             try:
                 identity = read(self.directory(jid) / 'launch.json', {})
                 metrics = indexed.get((identity.get('pid'), identity.get('created')))

@@ -71,6 +71,9 @@ class Watchdog:
         now = time.time()
         for task in snapshot['tasks']:
             j, s = task['job'], task['status']
+            if s.get('pending'):
+                self.cancel(j['id'])
+                continue
             row = self.history.setdefault(j['id'], {'attempts': 0})
             before = dict(row)
             if s.get('running'):

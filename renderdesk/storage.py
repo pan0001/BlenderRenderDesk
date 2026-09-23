@@ -14,12 +14,15 @@ class Catalogue:
         self.db.execute('PRAGMA synchronous=FULL')
         self.db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, config TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
-        self.db.execute('PRAGMA user_version=2')
+        self.db.execute('CREATE TABLE IF NOT EXISTS removed_jobs (id TEXT PRIMARY KEY, config TEXT NOT NULL, reason TEXT NOT NULL)')
+        self.db.execute('PRAGMA user_version=3')
         self.db.commit()
         self.issues = []
         # v1 remains readable. Import only new IDs; never rewrite running job files.
         for path in (self.root / 'jobs').glob('*/job.json'):
             try:
+                if self.db.execute('SELECT 1 FROM removed_jobs WHERE id=?', (path.parent.name,)).fetchone():
+                    continue
                 job = read(path)
                 if job['id'] != path.parent.name or not all(k in job for k in ('blend', 'output', 'start', 'end', 'step')):
                     raise ValueError('任务字段不完整')
@@ -35,6 +38,11 @@ class Catalogue:
         with self.db:
             self.db.execute('INSERT INTO jobs VALUES (?,?) ON CONFLICT(id) DO UPDATE SET config=excluded.config',
                             (job['id'], json.dumps(job, ensure_ascii=False)))
+
+    def remove(self, jid, reason):
+        with self.db:
+            self.db.execute('INSERT OR REPLACE INTO removed_jobs SELECT id,config,? FROM jobs WHERE id=?', (reason, jid))
+            self.db.execute('DELETE FROM jobs WHERE id=?', (jid,))
 
     def setting(self, key, default=None):
         row = self.db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()

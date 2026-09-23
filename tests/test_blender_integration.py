@@ -114,6 +114,26 @@ for frame in range(1,7):
     assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest() == sha for p, sha in saved.items())
     assert 'EXTERNAL_FIXTURE_FRAME' in (controller.directory(eid) / 'render.log').read_text(encoding='utf8')
     print('PASS real Blender: external attach, PNG boundary stop, cooperative restart, preserved six frames, captured stdout', flush=True)
+    # Queue operations requested during a frame must finish it before resetting/removing.
+    qid=controller.add({'blend':str(blend),'blender':blender,'start':1,'end':4,'step':1,'threads':1,'output':str(root/'queue-output')})
+    queue_output=Path(controller.jobs[qid]['output'])
+    controller.start(qid)
+    spawned.append(read(controller.directory(qid)/'launch.json')['pid'])
+    wait(qid,lambda s:s['state']=='rendering','queue render start')
+    assert controller.request_change(qid,'reset')['pending']
+    state=wait(qid,lambda s:s['state']=='ready' and not s['running'],'live reset')
+    assert state['done']==0 and state['elapsed']==0
+    assert list((queue_output/'.renderdesk-history').rglob('*.png'))
+    controller.start(qid)
+    spawned.append(read(controller.directory(qid)/'launch.json')['pid'])
+    wait(qid,lambda s:s['state']=='rendering','queue second start')
+    assert controller.request_change(qid,'remove')['pending']
+    deadline=time.monotonic()+100
+    while qid in controller.jobs and time.monotonic()<deadline:
+        controller.tick();time.sleep(.08)
+    assert qid not in controller.jobs
+    assert any(png_complete(p) for p in queue_output.glob('*.png'))
+    print('PASS real Blender: live reset waits for saved frame, archives it, returns ready; live delete saves frame and removes only queue entry',flush=True)
     (root / 'result.json').write_text(json.dumps({'managed': controller.status(jid), 'external': state}, indent=2), encoding='utf8')
 finally:
     # Only processes launched by this fixture are eligible for cleanup.

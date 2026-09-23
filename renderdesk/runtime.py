@@ -96,6 +96,15 @@ class Runtime:
 
     def _execute(self, action, values):
         c, n = self.controller, self.notifications
+        if action == 'queue.edit':
+            return c.edit(values['id'], values['changes'])
+        if action == 'queue.reorder':
+            return c.reorder(values['ids'])
+        if action in ('queue.remove', 'queue.reset'):
+            jid = values['id']
+            result = c.request_change(jid, 'remove' if action == 'queue.remove' else 'reset', values.get('mode', 'rerender'))
+            self.watchdog.reset(jid)
+            return result
         if action == 'project.import':
             return self._import(values)
         if action == '_rescan.apply':
@@ -131,6 +140,18 @@ class Runtime:
             self.controller = Controller(self.root)
             self.notifications = Notifications(self.root)
             self.watchdog = Watchdog(self.root)
+            # Observe completion before cleanup so a queued Bark notification is not lost.
+            initial = []
+            for i, j in self.controller.jobs.items():
+                try:
+                    if j.get('external', {}).get('phase') == 'attached' and not self.controller.live(i):
+                        self.controller.observe_external(j)
+                    initial.append({'job': j, 'status': self.controller.status(i)})
+                except Exception:
+                    pass  # Preserve invalid tasks for the normal error display.
+            self.notifications.observe({'tasks': initial})
+            self.controller.process_changes()
+            self.controller.cleanup_completed()
             self._refresh()
             self.ready.set_result(True)
         except Exception as error:

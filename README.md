@@ -1,6 +1,6 @@
-# Blender Render Desk 3.3.1
+# Blender Render Desk 3.5.0
 
-[本版更新总结与升级说明](docs/releases/v3.3.1.md) · [版本号](VERSION)
+[本版更新总结与升级说明](docs/releases/v3.5.0.md) · [版本号](VERSION)
 
 **GPT 帮你开始渲染，Render Desk 帮你看清进度；想上号时暂停一下，渲染完成让 Bark 告诉你。**
 
@@ -11,6 +11,18 @@
 [B站：@in_uni](https://space.bilibili.com/1856651886/) · MIT 开源 · 不设试用期
 
 桌面和网页共用一套浅色界面：顶栏导航、任务搜索、粉蓝点缀和渲染预览卡片。
+
+## 3.5 更新
+
+**软件内更新**：启动时检查 GitHub 正式发布，在“软件设置 → 软件更新”查看发布说明，自动下载、校验后点击安装并重启。原有任务和设置保留，Blender 继续渲染；新版启动失败时尝试回退。可关闭自动检查。
+
+目前下载完整 Windows 包，尚非差分增量更新。旧版本需要先手动升级到 3.5.0；以后新正式 Release 附带符合命名规则的 Windows ZIP 和 SHA256SUMS，即可在软件内更新。安装期间管理页面、frpc、依赖管理器的暂停与定时控制短暂不可用。详细限制和发布步骤见[本版说明](docs/releases/v3.5.0.md)。
+
+## 3.4 更新
+
+**自动识别外层分批脚本**：从 Blender 的 Python 父进程读取受支持的顺序渲染计划，例如每批 60 帧、共 1200 帧；后续 Blender 自动归入同一任务。暂停时先阻止外层脚本启动下一批，再等完整帧保存并退出进程；继续时重启原脚本，跳过完整帧，并保留最后合成流程。详情显示脚本名称、完整范围和当前批次，旧单批记录可升级为整套计划。
+
+图像齐全但脚本仍运行时显示“等待脚本后处理”；单批任务完成则明确显示“本批已完成”。支持直接执行的 Python 顶层 `range` + 单个 `subprocess.Popen` + `poll` 等待循环，目前不支持并行、动态、多工程调度；详细限制见本版更新说明。
 
 ## 3.3 更新
 
@@ -125,6 +137,7 @@ renderdesk/
   app.py               pywebview 窗口 / 服务器生命周期
   server.py            HTTP API、鉴权与静态资源
   runtime.py           单一任务控制线程与快照
+  updates.py           GitHub 版本检查、下载、校验与更新交接
   notifications.py     Bark 推送与持久通知队列
   projects.py          全局版本库、后台工程扫描
   watch.py             文件监测与限次恢复
@@ -136,7 +149,7 @@ renderdesk/
   engine/              Blender 执行器与文件协议
   web/                 唯一一套 HTML / CSS / JS 界面
 tests/                 后端、HTTP、浏览器与真实 Blender 测试
-scripts/               Windows 构建脚本
+scripts/               Windows 构建与发布附件打包脚本
 vendor/frpc/           官方客户端二进制、来源与许可证
 assets/                图标与界面截图
 docs/                  来源、依赖与验证说明
@@ -149,13 +162,14 @@ Python 3.10+；本次验证 Windows / Python 3.13 / Blender 5.1.2。
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 .\.venv\Scripts\python app.py
-.\.venv\Scripts\python -m unittest tests.test_engine tests.test_web tests.test_features -v
+.\.venv\Scripts\python -m unittest tests.test_engine tests.test_web tests.test_features tests.test_queue tests.test_adoption tests.test_batch tests.test_updates -v
 .\.venv\Scripts\python -m tests.test_blender_integration
 .\.venv\Scripts\python -m tests.test_project_integration
 # 可选网页测试，使用已安装的 Edge：
 .\.venv\Scripts\python -m pip install playwright
 .\.venv\Scripts\python -m tests.test_browser
 .\scripts\build.ps1 -Python .\.venv\Scripts\python.exe
+.\.venv\Scripts\python scripts/package_release.py
 ```
 
 独立原创代码使用 [MIT](LICENSE)。[实现来源](docs/PROVENANCE.md)、[依赖声明](docs/THIRD_PARTY_NOTICES.md)、[验证记录](docs/验证记录.md)。pywebview 与 Bark 的对接分别参考 [pywebview API](https://pywebview.flowrl.com/api/) 和 [Bark 官方文档](https://github.com/Finb/Bark/blob/master/README.zh.md)。

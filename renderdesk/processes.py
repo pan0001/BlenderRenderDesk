@@ -112,7 +112,16 @@ class Sampler:
                 with cached.oneshot():
                     args = cached.cmdline()
                     cpu = cached.cpu_percent() / (psutil.cpu_count() or 1)
+                    scheduler_script = None
+                    try:
+                        from .batch import python_script
+                        parent = cached.parent()
+                        path = python_script(parent) if parent else None
+                        scheduler_script = str(path) if path else None
+                    except (psutil.Error, OSError):
+                        pass
                     rows.append({'pid': item.pid, 'created': created, 'exe': cached.exe(), 'args': args,
+                                 'scheduler_script': scheduler_script,
                                  'cwd': cached.cwd(), 'blend': next((a for a in args if a.lower().endswith('.blend')), ''),
                                  'cpu': None if first else round(cpu, 1), 'ram_mb': cached.memory_info().rss / 1048576,
                                  'elapsed': max(0, time.time() - created), **gpu.get(item.pid, {})})

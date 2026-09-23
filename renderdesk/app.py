@@ -11,6 +11,8 @@ from .engine.protocol import read, write
 from .service import default_root
 from .runtime import Runtime
 from .server import create_app
+from .updates import Updater, check_render_locations
+from .version import VERSION
 
 
 def workspace_lock(root):
@@ -57,10 +59,21 @@ def main():
     parser.add_argument('--remote', action='store_true', help='Listen on all network interfaces with bearer authentication')
     parser.add_argument('--port', type=int)
     parser.add_argument('--smoke-test', action='store_true')
+    parser.add_argument('--update-ready', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     lock = workspace_lock(args.data_dir)
     runtime = None
     server = None
+    updater = None
+    window = None
+    shutdown_event = threading.Event()
+    def shutdown():
+        shutdown_event.set()
+        if window:
+            window.destroy()
+    def ready():
+        if args.update_ready:
+            write(args.update_ready, {'version': VERSION, 'pid': os.getpid()})
     try:
         config = read(args.data_dir / 'server.json', {})
         remote = args.remote or config.get('remote', False)
@@ -73,26 +86,31 @@ def main():
             token = secrets.token_urlsafe(32)
             write(token_path, {'token': token})
         runtime = Runtime(args.data_dir)
+        updater = Updater(args.data_dir, shutdown, lambda install: check_render_locations(install, runtime.snapshot()))
         from waitress import create_server
-        server = create_server(create_app(runtime, token, remote), host='0.0.0.0' if remote else '127.0.0.1', port=port, threads=6)
+        server = create_server(create_app(runtime, token, remote, updater), host='0.0.0.0' if remote else '127.0.0.1', port=port, threads=6)
         actual_port = server.effective_port
         url = f'http://127.0.0.1:{actual_port}/'
         write(args.data_dir / 'server-status.json', {'url': url, 'remote': remote, 'pid': os.getpid()})
         threading.Thread(target=server.run, daemon=True, name='HTTP server').start()
+        if updater.snapshot()['auto_check'] and not args.smoke_test:
+            updater.check()
         if runtime.tunnel.config.get('autostart'):
             runtime.submit('frpc.start', {})
         if args.server:
+            ready()
             print(f'Render Desk: {url} | access key: {token_path}', flush=True)
             if args.smoke_test:
                 return 0
             try:
-                while True:
-                    time.sleep(.5)
+                while not shutdown_event.wait(.5):
+                    pass
+                return 0
             except KeyboardInterrupt:
                 return 0
         import webview
         bridge = DesktopBridge()
-        window = webview.create_window('Blender Render Desk 3.3.1', url + '#token=' + token,
+        window = webview.create_window('Blender Render Desk ' + VERSION, url + '#token=' + token,
                                        js_api=bridge, width=1380, height=900, min_size=(780, 580), background_color='#f6f7f9')
         bridge._window = window
         def bind_drop():
@@ -105,6 +123,18 @@ def main():
             window.dom.document.events.dragover += DOMEventHandler(lambda e: None, True, False, debounce=500)
             window.dom.document.events.drop += DOMEventHandler(drop, True, False)
         window.events.loaded += bind_drop
+        if args.update_ready:
+            def update_ready():
+                for _ in range(240):
+                    if shutdown_event.wait(.25):
+                        return
+                    try:
+                        if window.evaluate_js('document.documentElement.dataset.ready') == 'true':
+                            ready()
+                            return
+                    except Exception:
+                        pass
+            window.events.loaded += lambda: threading.Thread(target=update_ready, daemon=True).start()
         if args.smoke_test:
             def smoke():
                 for _ in range(80):
@@ -120,6 +150,8 @@ def main():
         webview.start(gui='edgechromium' if os.name == 'nt' else None)
         return 0 if not args.smoke_test or (args.data_dir / 'smoke-result.json').exists() else 2
     finally:
+        if updater:
+            updater.close()
         if server:
             server.close()
         if runtime:

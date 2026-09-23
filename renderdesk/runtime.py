@@ -14,6 +14,7 @@ from .engine.protocol import signature
 import uuid
 from .notifications import Notifications
 from .adoption import infer_script
+from .batch import infer_batch
 
 
 class AdoptionProgress:
@@ -104,6 +105,10 @@ class Runtime:
         scan = scan_project(exe, path)
         progress.update(3, '识别脚本与输出配置', '解析本次帧范围、实际输出目录和文件名模板。')
         prepared = infer_script(script, args, cwd, scan)
+        progress.update(3, '识别外层脚本与完整计划', '检查是否由 Python 脚本分批启动 Blender，并核对全部批次。')
+        batch = infer_batch(item, scan)
+        if batch:
+            prepared['batch'] = batch
         if signature(script) != before:
             raise ValueError('读取工程期间脚本发生变化，请重试')
         prepared['process'] = {'pid': item.pid, 'created': row['created']}
@@ -160,6 +165,10 @@ class Runtime:
         c, n = self.controller, self.notifications
         if action == '_adopt.apply':
             from .engine.protocol import read
+            if values.get('batch'):
+                if signature(values['blend']) != values['source']:
+                    raise ValueError('识别后工程发生变化，请重试')
+                return c.attach_batch(values)
             row = values['process']
             for jid in c.jobs:
                 identity = read(c.directory(jid) / 'launch.json', {})

@@ -14,6 +14,7 @@ from .processes import Sampler, process
 from .engine.protocol import frame_file, frames, png_complete, read, receipt, signature, verify, write
 from .storage import Catalogue
 from .queueing import QueueActions
+from .batch_control import BatchActions
 
 LABELS = {'ready': '等待开始', 'starting': '启动中', 'loading': '载入工程', 'rendering': '正在渲染',
           'pausing': '保存当前帧后退出', 'watching': '等待新帧保存后停止', 'paused': '已暂停 · 资源已释放',
@@ -46,7 +47,7 @@ class LogReader:
         return reset, self.decoder.decode(block)
 
 
-class Controller(QueueActions):
+class Controller(BatchActions, QueueActions):
     def __init__(self, root=None):
         self.root = Path(root or default_root()).resolve()
         self.catalogue = Catalogue(self.root)
@@ -70,6 +71,8 @@ class Controller(QueueActions):
             stream.write(f'\n[RenderDesk {time.strftime("%H:%M:%S")}] {message}\n')
 
     def live(self, jid):
+        if self.jobs[jid].get('batch'):
+            return self.batch_live(jid)
         child = self.children.get(jid)
         if child and child.poll() is not None:
             del self.children[jid]
@@ -135,7 +138,7 @@ class Controller(QueueActions):
         if job.get('auto_detected') and job.get('external'):
             values = {**values, 'start': job['start'], 'end': job['end'], 'step': job['step']}
         updated.update(project=values['project'], start=values['start'], end=values['end'],
-                       step=values['step'], range_source='script' if job.get('auto_detected') else 'project')
+                       step=values['step'], range_source='batch' if job.get('batch') else 'script' if job.get('auto_detected') else 'project')
         if job.get('preserve_project') and not job.get('external'):
             updated['project_paths'] = values['project_paths']
         records = read(self.directory(jid) / 'progress.json', {'done': {}})['done']
@@ -184,6 +187,8 @@ class Controller(QueueActions):
         return {'frame': int(f), 'version': str(r.get('mtime_ns', 0)) + '-' + str(r.get('size', 0))}
 
     def start(self, jid):
+        if self.jobs[jid].get('batch'):
+            return self.start_batch(jid)
         job, directory = self.jobs[jid], self.directory(jid)
         if self.pending(jid):
             raise ValueError('任务还有待完成的队列操作')
@@ -245,6 +250,8 @@ class Controller(QueueActions):
             raise
 
     def pause(self, jid):
+        if self.jobs[jid].get('batch'):
+            return self.pause_batch(jid)
         if not self.live(jid):
             raise ValueError('此任务没有运行中的 Blender')
         job = self.jobs[jid]
@@ -345,6 +352,8 @@ class Controller(QueueActions):
         return done
 
     def observe_external(self, job):
+        if job.get('batch'):
+            return self.observe_batch(job)
         directory = self.directory(job['id'])
         done = self.inspect_external(job)
         previous = read(directory / 'progress.json', {'done': {}})['done']
@@ -404,7 +413,10 @@ class Controller(QueueActions):
             try:
                 identity = read(self.directory(jid) / 'launch.json', {})
                 metrics = indexed.get((identity.get('pid'), identity.get('created')))
-                tasks.append({'job': {k: v for k, v in job.items() if k != 'project_paths'}, 'status': self.status(jid, metrics)})
+                state=self.status(jid, metrics)
+                if job.get('batch'):
+                    state=self.batch_status(jid,state,indexed)
+                tasks.append({'job': {k: v for k, v in job.items() if k != 'project_paths'}, 'status': state})
             except Exception as error:
                 tasks.append({'job': {k: v for k, v in job.items() if k != 'project_paths'}, 'status': {'state': 'error', 'message': str(error), 'done': 0, 'total': len(frames(job)), 'elapsed': 0}})
         return {'tasks': tasks, 'processes': processes, 'system': system, 'notices': self.notices[-5:]}

@@ -12,7 +12,7 @@ from werkzeug.exceptions import HTTPException
 from .engine.protocol import read, write
 
 
-def create_app(runtime, token, remote=False):
+def create_app(runtime, token, remote=False, updater=None):
     app = Flask(__name__, static_folder=None)
     app.config['MAX_CONTENT_LENGTH'] = 65536
     web = Path(__file__).parent / 'web'
@@ -60,6 +60,27 @@ def create_app(runtime, token, remote=False):
     @app.get('/api/state')
     def state():
         return jsonify(runtime.snapshot())
+
+    @app.get('/api/updates')
+    def updates():
+        if updater is None:
+            return jsonify(error='当前服务没有启用更新组件'), 503
+        return jsonify(updater.snapshot())
+
+    @app.post('/api/updates')
+    def update_action():
+        if updater is None:
+            return jsonify(error='当前服务没有启用更新组件'), 503
+        body = request.get_json()
+        if not isinstance(body, dict):
+            raise ValueError('无效更新请求')
+        action = body.get('action')
+        if action == 'settings':
+            return jsonify(updater.configure(body.get('auto_check')))
+        actions = {'check': updater.check, 'download': updater.download, 'install': updater.install_update}
+        if action not in actions:
+            raise ValueError('无效更新操作')
+        return jsonify(actions[action]()), 202
 
     @app.get('/api/settings')
     def settings():

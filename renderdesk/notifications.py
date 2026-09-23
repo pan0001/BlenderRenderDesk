@@ -87,7 +87,10 @@ class Notifications:
                 current = state['state']
                 # Baseline existing finished tasks on first import; no historical notification flood.
                 if previous and previous[0] != 'complete' and current == 'complete' and enabled:
-                    self.enqueue('渲染完成 · ' + job['name'],
+                    project=job.get('project',{})
+                    partial=bool(job.get('external') and not job.get('batch') and project and
+                                 any(job.get(k)!=project.get(k) for k in ('start','end','step')))
+                    self.enqueue(('本批渲染完成 · ' if partial else '渲染完成 · ') + job['name'],
                                  f"{state['done']} / {state['total']} 帧已完成\n累计用时 {int(state.get('elapsed', 0))} 秒")
                 if not previous or previous[0] != current:
                     self.db.execute('INSERT OR REPLACE INTO seen VALUES (?,?)', (job['id'], current))

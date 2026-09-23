@@ -40,6 +40,8 @@ class QueueActions:
         updated = self.validate(updated)
         updated['output'] = str(Path(updated['output']).resolve())
         config_changed = any(updated.get(k) != job.get(k) for k in allowed - {'name'})
+        if job.get('batch') and config_changed:
+            raise ValueError('整套脚本计划的渲染配置由原脚本控制，目前只支持编辑名称')
         if config_changed and read(self.directory(jid) / 'progress.json', {'done': {}})['done']:
             raise ValueError('已有完成帧，请先选择“从头重渲染”重置，再修改渲染配置；名称可直接修改')
         if job.get('external') and (updated['output'] != job['output'] or updated.get('threads') != job.get('threads')):
@@ -158,7 +160,7 @@ class QueueActions:
         write(directory / 'progress.json', {'done': done})
         write(directory / 'control.json', {'pause': False, 'pause_at': None})
         write(directory / 'status.json', {'state': 'ready', 'elapsed_total': 0, 'updated': time.time()})
-        for name in ('launch.json', 'intent.json', 'external_stop.json'):
+        for name in ('launch.json', 'intent.json', 'external_stop.json', 'batch-launch.json', 'batch-children.json', 'batch-result.json'):
             (directory / name).unlink(missing_ok=True)
         self.frame_cache.pop(jid, None)
         (directory / 'queue-change.json').unlink()

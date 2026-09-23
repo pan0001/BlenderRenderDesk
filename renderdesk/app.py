@@ -92,7 +92,7 @@ def main():
                 return 0
         import webview
         bridge = DesktopBridge()
-        window = webview.create_window('Blender Render Desk 3.3', url + '#token=' + token,
+        window = webview.create_window('Blender Render Desk 3.3.1', url + '#token=' + token,
                                        js_api=bridge, width=1380, height=900, min_size=(780, 580), background_color='#f6f7f9')
         bridge._window = window
         def bind_drop():

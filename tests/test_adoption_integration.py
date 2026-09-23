@@ -45,7 +45,9 @@ for f in range(start,end+1):
         with (root/'original.log').open('wb') as log:
             child=subprocess.Popen([args.blender,'-b',str(blend),'-t','1','--python',str(script),'--','final','181','190'],stdout=log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         row={'pid':child.pid,'created':psutil.Process(child.pid).create_time()}
-        jid=runtime.submit('process.adopt',{'process':row}).result(180)
+        operation=runtime.submit('process.adopt',{'process':row})
+        jid=operation.result(180)
+        assert operation.progress.snapshot()['step']==4
         task=wait(jid,lambda t:t['status']['running'])
         assert (task['job']['start'],task['job']['end'],task['status']['total'])==(181,190,10)
         assert task['job']['project']['total']==1200

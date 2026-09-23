@@ -125,13 +125,15 @@ def create_app(runtime, token, remote=False):
         if not pair:
             return jsonify(error='操作记录已过期，请刷新任务状态'), 404
         future = pair[0]
+        tracker = getattr(future, 'progress', None)
+        progress = {'progress': tracker.snapshot()} if tracker else {}
         if not future.done():
-            return jsonify(done=False)
+            return jsonify(done=False, **progress)
         try:
-            return jsonify(done=True, result=future.result())
+            return jsonify(done=True, result=future.result(), **progress)
         except Exception as error:
             # Service errors contain useful local file validation, but Bark network errors never reach here.
-            return jsonify(done=True, error=str(error))
+            return jsonify(done=True, error=str(error), **progress)
 
     @app.get('/api/jobs/<jid>/log')
     def log(jid):

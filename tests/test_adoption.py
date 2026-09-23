@@ -83,7 +83,9 @@ class AdoptionTests(unittest.TestCase):
     def test_single_api_action_and_duplicate_inflight(self):
         runtime=Runtime(self.root/'runtime')
         entered=threading.Event();release=threading.Event()
-        def detect(row):entered.set();release.wait(5);return 'recognized-id'
+        def detect(row, progress):
+            progress.update(2, '读取 Blender 工程', '扫描中')
+            entered.set();release.wait(5);return 'recognized-id'
         try:
             with patch.object(runtime,'_adopt',side_effect=detect) as adopt:
                 app=create_app(runtime,'test');client=app.test_client();headers={'Authorization':'Bearer test'}
@@ -92,14 +94,36 @@ class AdoptionTests(unittest.TestCase):
                 self.assertEqual(response.status_code,202);self.assertTrue(entered.wait(2))
                 future=runtime.submit('process.adopt',values)
                 self.assertFalse(future.done());self.assertEqual(client.get('/api/state',headers=headers).status_code,200)
+                pending=client.get('/api/operations/'+response.json['operation'],headers=headers).json
+                self.assertFalse(pending['done']);self.assertEqual(pending['progress']['step'],2)
+                self.assertEqual(pending['progress'],future.progress.snapshot())
                 release.set();self.assertEqual(future.result(2),'recognized-id');self.assertEqual(adopt.call_count,1)
                 result=client.get('/api/operations/'+response.json['operation'],headers=headers).json
                 self.assertEqual(result['result'],'recognized-id')
+                self.assertEqual(result['progress']['message'],'读取 Blender 工程')
         finally:release.set();runtime.close()
 
     def test_shadowed_helpers_are_not_mistaken_for_builtins(self):
         self.script.write_text('def range(*args): return [1,2]\n'+SCRIPT,encoding='utf8')
         with self.assertRaisesRegex(ValueError,'重定义'):self.infer()
+
+    def test_failed_adoption_keeps_phase_and_error(self):
+        runtime=Runtime(self.root/'runtime-error')
+        def detect(row, progress):
+            progress.update(3, '识别脚本与输出配置', '解析输出目录')
+            raise ValueError('实际输出目录不存在')
+        try:
+            with patch.object(runtime,'_adopt',side_effect=detect):
+                client=create_app(runtime,'test').test_client();headers={'Authorization':'Bearer test'}
+                values={'process':{'pid':42,'created':123.0}}
+                response=client.post('/api/commands',headers=headers,json={'action':'process.adopt','values':values})
+                future=next(iter(runtime.adopting.values()))
+                with self.assertRaises(ValueError):future.result(2)
+                result=client.get('/api/operations/'+response.json['operation'],headers=headers).json
+                self.assertTrue(result['done']);self.assertEqual(result['progress']['step'],3)
+                self.assertEqual(result['error'],'实际输出目录不存在')
+                self.assertEqual(client.get('/api/operations/'+response.json['operation']).status_code,401)
+        finally:runtime.close()
 
     def test_dynamic_execution_is_rejected_without_running(self):
         self.script.write_text("exec('raise RuntimeError()')\n"+SCRIPT,encoding='utf8')

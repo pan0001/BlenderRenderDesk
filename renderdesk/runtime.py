@@ -16,6 +16,22 @@ from .notifications import Notifications
 from .adoption import infer_script
 
 
+class AdoptionProgress:
+    """Thread-safe phase information shared by coalesced adoption requests."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.value = {'step': 0, 'total': 4, 'message': '等待扫描线程',
+                      'detail': '正在排队，原 Blender 继续渲染。'}
+
+    def update(self, step, message, detail):
+        with self.lock:
+            self.value = dict(step=step, total=4, message=message, detail=detail)
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.value)
+
+
 class Runtime:
     def __init__(self, root):
         self.root = Path(root)
@@ -48,7 +64,10 @@ class Runtime:
             with self.adopt_lock:
                 self.adopting = {k: f for k, f in self.adopting.items() if not f.done()}
                 if key not in self.adopting:
-                    self.adopting[key] = self.workers.submit(self._adopt, row)
+                    progress = AdoptionProgress()
+                    future = self.workers.submit(self._adopt, row, progress)
+                    future.progress = progress
+                    self.adopting[key] = future
                 return self.adopting[key]
         if action == 'project.scan':
             return self.workers.submit(self._scan, values)
@@ -64,7 +83,9 @@ class Runtime:
         self.commands.put_nowait((action, values, future))
         return future
 
-    def _adopt(self, row):
+    def _adopt(self, row, progress=None):
+        progress = progress or AdoptionProgress()
+        progress.update(1, '检查进程与启动参数', '确认进程仍在运行，并检查原渲染脚本。')
         from .processes import process
         item = process(row)
         if not item:
@@ -79,11 +100,14 @@ class Runtime:
         if before['mtime_ns'] / 1e9 > row['created'] + 2:
             raise ValueError('原脚本在此进程启动后被修改，无法确认运行中的配置；等待该进程结束后再接管新进程')
         exe, path, _ = process_project(row)
+        progress.update(2, '读取 Blender 工程', '正在后台扫描场景和工程配置。大工程可能需要较长时间，原渲染继续运行。')
         scan = scan_project(exe, path)
+        progress.update(3, '识别脚本与输出配置', '解析本次帧范围、实际输出目录和文件名模板。')
         prepared = infer_script(script, args, cwd, scan)
         if signature(script) != before:
             raise ValueError('读取工程期间脚本发生变化，请重试')
         prepared['process'] = {'pid': item.pid, 'created': row['created']}
+        progress.update(4, '加入队列并核对已有帧', '保存任务配置，检查已完成帧；不会重启原渲染进程。')
         return self.submit('_adopt.apply', prepared).result(30)
 
     def _scan(self, values):

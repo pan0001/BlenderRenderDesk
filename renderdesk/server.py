@@ -99,7 +99,7 @@ def create_app(runtime, token, remote=False):
     @app.post('/api/commands')
     def command():
         body = request.get_json()
-        if not isinstance(body, dict) or body.get('action') not in ('add', 'attach', 'start', 'pause', 'schedule', 'bark.save', 'bark.test', 'refresh', 'project.scan', 'project.import', 'project.rescan', 'blender.save', 'watchdog.save', 'frpc.save', 'frpc.start', 'frpc.stop', 'queue.edit', 'queue.reorder', 'queue.remove', 'queue.reset'):
+        if not isinstance(body, dict) or body.get('action') not in ('process.adopt', 'add', 'attach', 'start', 'pause', 'schedule', 'bark.save', 'bark.test', 'refresh', 'project.scan', 'project.import', 'project.rescan', 'blender.save', 'watchdog.save', 'frpc.save', 'frpc.start', 'frpc.stop', 'queue.edit', 'queue.reorder', 'queue.remove', 'queue.reset'):
             raise ValueError('无效操作')
         values = body.get('values', {})
         if not isinstance(values, dict):

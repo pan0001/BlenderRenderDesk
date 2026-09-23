@@ -13,6 +13,7 @@ from .tunnel import Frpc
 from .engine.protocol import signature
 import uuid
 from .notifications import Notifications
+from .adoption import infer_script
 
 
 class Runtime:
@@ -24,6 +25,8 @@ class Runtime:
         self.tunnel = Frpc(self.root)
         self.workers = ThreadPoolExecutor(max_workers=2, thread_name_prefix='Project scan')
         self.scan_lock = threading.Lock()
+        self.adopt_lock = threading.Lock()
+        self.adopting = {}
         self.scans = {}
         self.commands = queue.Queue(maxsize=64)
         self.stop = threading.Event()
@@ -39,6 +42,14 @@ class Runtime:
             return copy.deepcopy(self.cached)
 
     def submit(self, action, values):
+        if action == 'process.adopt':
+            row = values['process']
+            key = (row['pid'], row['created'])
+            with self.adopt_lock:
+                self.adopting = {k: f for k, f in self.adopting.items() if not f.done()}
+                if key not in self.adopting:
+                    self.adopting[key] = self.workers.submit(self._adopt, row)
+                return self.adopting[key]
         if action == 'project.scan':
             return self.workers.submit(self._scan, values)
         if action == 'project.rescan':
@@ -52,6 +63,28 @@ class Runtime:
         future = Future()
         self.commands.put_nowait((action, values, future))
         return future
+
+    def _adopt(self, row):
+        from .processes import process
+        item = process(row)
+        if not item:
+            raise ValueError('进程已退出，请刷新列表')
+        args, cwd = item.cmdline(), item.cwd()
+        if not any(a in args for a in ('-b', '--background')) or args.count('--python') != 1 or any(a in args for a in ('--python-expr', '-a', '--render-anim', '-f', '--render-frame')):
+            raise ValueError('此启动方式暂不能自动接管；支持单个 Python 脚本同步逐帧输出 PNG')
+        script = (Path(cwd) / args[args.index('--python') + 1]).resolve()
+        if not script.is_file():
+            raise ValueError('原渲染脚本已不存在，无法识别接管配置')
+        before = signature(script)
+        if before['mtime_ns'] / 1e9 > row['created'] + 2:
+            raise ValueError('原脚本在此进程启动后被修改，无法确认运行中的配置；等待该进程结束后再接管新进程')
+        exe, path, _ = process_project(row)
+        scan = scan_project(exe, path)
+        prepared = infer_script(script, args, cwd, scan)
+        if signature(script) != before:
+            raise ValueError('读取工程期间脚本发生变化，请重试')
+        prepared['process'] = {'pid': item.pid, 'created': row['created']}
+        return self.submit('_adopt.apply', prepared).result(30)
 
     def _scan(self, values):
         row = values.get('process')
@@ -74,6 +107,11 @@ class Runtime:
         if not job:
             raise ValueError('找不到任务')
         scan = scan_project(job['blender'], job['blend'])
+        if job.get('auto_detected') and job.get('external'):
+            scene = next(s for s in scan['scenes'] if s['scene'] == job['scene'])
+            prepared = {'project': {k:v for k,v in scene.items() if k != 'project_paths'},
+                        'source': scan['source'], 'start': job['start'], 'end': job['end'], 'step': job['step']}
+            return self.submit('_rescan.apply', {'id': job['id'], 'prepared': prepared}).result(30)
         overrides = {'output': job['output']} if job.get('output_override') else {}
         prepared = scene_values(scan, job.get('scene'), overrides)
         return self.submit('_rescan.apply', {'id': job['id'], 'prepared': prepared}).result(30)
@@ -96,6 +134,16 @@ class Runtime:
 
     def _execute(self, action, values):
         c, n = self.controller, self.notifications
+        if action == '_adopt.apply':
+            from .engine.protocol import read
+            row = values['process']
+            for jid in c.jobs:
+                identity = read(c.directory(jid) / 'launch.json', {})
+                if identity.get('pid') == row['pid'] and identity.get('created') == row['created'] and c.live(jid):
+                    return jid
+            if signature(values['blend']) != values['source']:
+                raise ValueError('识别后工程发生变化，请重试')
+            return c.attach(values)
         if action == 'queue.edit':
             return c.edit(values['id'], values['changes'])
         if action == 'queue.reorder':

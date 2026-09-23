@@ -132,8 +132,10 @@ class Controller(QueueActions):
         if values['source'] != job['source']:
             raise ValueError('工程内容已修改，请新建任务，避免混用之前的完成帧')
         updated = dict(job)
+        if job.get('auto_detected') and job.get('external'):
+            values = {**values, 'start': job['start'], 'end': job['end'], 'step': job['step']}
         updated.update(project=values['project'], start=values['start'], end=values['end'],
-                       step=values['step'], range_source='project')
+                       step=values['step'], range_source='script' if job.get('auto_detected') else 'project')
         if job.get('preserve_project') and not job.get('external'):
             updated['project_paths'] = values['project_paths']
         records = read(self.directory(jid) / 'progress.json', {'done': {}})['done']
@@ -293,6 +295,8 @@ class Controller(QueueActions):
             raise ValueError('文件名模板应类似 ####.png 或 frame_######.png')
         if not script.is_file() or not Path(job['output']).is_dir():
             raise ValueError('脚本或输出文件夹不存在')
+        if values.get('detected_script_source') and signature(script) != values['detected_script_source']:
+            raise ValueError('自动识别后脚本发生变化，请重新接管')
         for existing in self.jobs:
             launch = read(self.directory(existing) / 'launch.json', {})
             if self.live(existing) and (launch.get('pid') == item.pid or Path(self.jobs[existing]['output']).resolve() == Path(job['output']).resolve()):
@@ -309,6 +313,8 @@ class Controller(QueueActions):
         write(directory / 'status.json', {'state': 'rendering', 'updated': time.time()})
         write(directory / 'progress.json', {'done': self.inspect_external(job)})
         self.event(jid, '外部进程已接入。首次暂停检测下一张完整 PNG 后结束原进程，可能丢弃随后开始的帧。旧 stdout 无法补接；续渲染后记录完整日志。')
+        if job.get('auto_detected'):
+            self.event(jid, f"自动识别：{job['start']}–{job['end']}，步长 {job['step']}；输出 {job['output']}；模板 {pattern}")
         return jid
 
     def inspect_external(self, job):

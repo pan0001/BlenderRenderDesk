@@ -46,7 +46,7 @@ def main():
                 img=Image.new('RGB',(960,540),'#17352e');img.save(path)
                 write(root/'data/jobs'/jid/'progress.json',{'done':{'1':receipt(path)}})
                 expect(page.locator('#preview')).to_be_visible(timeout=10000)
-                page.get_by_role('button',name='◷ 定时计划').click();page.locator('[name=start_at]').fill('2099-01-01T12:00')
+                page.get_by_role('button',name='定时计划').click();page.locator('[name=start_at]').fill('2099-01-01T12:00')
                 page.get_by_role('button',name='保存计划').click();expect(page.locator('#schedule-dialog')).not_to_be_visible()
                 second=browser.new_page(viewport={'width':390,'height':844});second.goto(url)
                 second.get_by_label('访问密钥',exact=True).fill(token);second.get_by_role('button',name='连接工作空间 →').click()
